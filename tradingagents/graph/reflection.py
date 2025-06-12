@@ -1,13 +1,13 @@
 # TradingAgents/graph/reflection.py
 
 from typing import Dict, Any
-from langchain_openai import ChatOpenAI
+from tradingagents.llm_interface import BaseLLM
 
 
 class Reflector:
     """Handles reflection on decisions and updating memory."""
 
-    def __init__(self, quick_thinking_llm: ChatOpenAI):
+    def __init__(self, quick_thinking_llm: BaseLLM):
         """Initialize the reflector with an LLM."""
         self.quick_thinking_llm = quick_thinking_llm
         self.reflection_system_prompt = self._get_reflection_prompt()
@@ -67,7 +67,7 @@ Adhere strictly to these instructions, and ensure your output is detailed, accur
             ),
         ]
 
-        result = self.quick_thinking_llm.invoke(messages).content
+        result = self.quick_thinking_llm.chat(messages).content
         return result
 
     def reflect_bull_researcher(self, current_state, returns_losses, bull_memory):

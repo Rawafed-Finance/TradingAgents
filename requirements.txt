@@ -22,3 +22,9 @@ redis
 chainlit
 rich
 questionary
+# For OpenAI LLM support
+openai
+# For local LLM support (Llama models)
+llama-cpp-python
+# For local embedding support
+sentence-transformers

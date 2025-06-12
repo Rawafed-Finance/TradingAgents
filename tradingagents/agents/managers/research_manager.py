@@ -1,8 +1,25 @@
 import time
 import json
+from tradingagents.llm_interface import LocalLLM
 
 
 def create_research_manager(llm, memory):
+    def truncate_prompt_to_tokens(llm, prompt_text, max_tokens=None):
+        # Only truncate for LocalLLM
+        if not isinstance(llm, LocalLLM):
+            return prompt_text
+        if max_tokens is None:
+            max_tokens = getattr(llm.llm, 'context_length', 4096)
+        tokens = llm.llm.tokenize(bytes(prompt_text, "utf-8"), add_bos=True)
+        if len(tokens) <= max_tokens:
+            return prompt_text
+        for cut in range(len(prompt_text), 0, -100):
+            candidate = prompt_text[:cut]
+            tokens = llm.llm.tokenize(bytes(candidate, "utf-8"), add_bos=True)
+            if len(tokens) <= max_tokens:
+                return candidate
+        return prompt_text[:max_tokens * 4]
+
     def research_manager_node(state) -> dict:
         history = state["investment_debate_state"].get("history", "")
         market_research_report = state["market_report"]
@@ -36,20 +53,30 @@ Here are your past reflections on mistakes:
 Here is the debate:
 Debate History:
 {history}"""
-        response = llm.invoke(prompt)
+        if hasattr(llm, "invoke"):
+            response = llm.invoke(prompt)
+            response_content = response.content
+        else:
+            if hasattr(llm, "llm"):
+                prompt = truncate_prompt_to_tokens(llm, prompt)
+            response = llm.chat(prompt)
+            if isinstance(response, str):
+                response_content = response
+            else:
+                response_content = response.content
 
         new_investment_debate_state = {
-            "judge_decision": response.content,
+            "judge_decision": response_content,
             "history": investment_debate_state.get("history", ""),
             "bear_history": investment_debate_state.get("bear_history", ""),
             "bull_history": investment_debate_state.get("bull_history", ""),
-            "current_response": response.content,
+            "current_response": response_content,
             "count": investment_debate_state["count"],
         }
 
         return {
             "investment_debate_state": new_investment_debate_state,
-            "investment_plan": response.content,
+            "investment_plan": response_content,
         }
 
     return research_manager_node

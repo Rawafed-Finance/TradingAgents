@@ -1,8 +1,25 @@
 import time
 import json
+from tradingagents.llm_interface import LocalLLM
 
 
 def create_neutral_debator(llm):
+    def truncate_prompt_to_tokens(llm, prompt_text, max_tokens=None):
+        # Only truncate for LocalLLM
+        if not isinstance(llm, LocalLLM):
+            return prompt_text
+        if max_tokens is None:
+            max_tokens = getattr(llm.llm, 'context_length', 4096)
+        tokens = llm.llm.tokenize(bytes(prompt_text, "utf-8"), add_bos=True)
+        if len(tokens) <= max_tokens:
+            return prompt_text
+        for cut in range(len(prompt_text), 0, -100):
+            candidate = prompt_text[:cut]
+            tokens = llm.llm.tokenize(bytes(candidate, "utf-8"), add_bos=True)
+            if len(tokens) <= max_tokens:
+                return candidate
+        return prompt_text[:max_tokens * 4]
+
     def neutral_node(state) -> dict:
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
@@ -32,9 +49,17 @@ Here is the current conversation history: {history} Here is the last response fr
 
 Engage actively by analyzing both sides critically, addressing weaknesses in the risky and conservative arguments to advocate for a more balanced approach. Challenge each of their points to illustrate why a moderate risk strategy might offer the best of both worlds, providing growth potential while safeguarding against extreme volatility. Focus on debating rather than simply presenting data, aiming to show that a balanced view can lead to the most reliable outcomes. Output conversationally as if you are speaking without any special formatting."""
 
-        response = llm.invoke(prompt)
-
-        argument = f"Neutral Analyst: {response.content}"
+        if hasattr(llm, "invoke"):
+            response = llm.invoke(prompt)
+            argument = f"Neutral Analyst: {response.content}"
+        else:
+            if hasattr(llm, "llm"):
+                prompt = truncate_prompt_to_tokens(llm, prompt)
+            response = llm.chat(prompt)
+            if isinstance(response, str):
+                argument = f"Neutral Analyst: {response}"
+            else:
+                argument = f"Neutral Analyst: {response.content}"
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,

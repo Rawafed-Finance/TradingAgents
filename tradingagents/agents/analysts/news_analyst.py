@@ -44,8 +44,19 @@ def create_news_analyst(llm, toolkit):
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(ticker=ticker)
 
-        chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(state["messages"])
+        if hasattr(llm, "bind_tools"):
+            chain = prompt | llm.bind_tools(tools)
+            result = chain.invoke(state["messages"])
+        else:
+            # LocalLLM fallback: just use chat
+            prompt_text = prompt.format(messages=state["messages"])
+            if toolkit.config.get("llm_backend") == "local":
+                result = llm.chat(prompt_text)
+                return {
+                    "messages": [result],
+                    "news_report": result,
+                }
+            result = llm.chat(prompt_text)
 
         return {
             "messages": [result],
@@ -53,3 +64,21 @@ def create_news_analyst(llm, toolkit):
         }
 
     return news_analyst_node
+
+def truncate_prompt(prompt_text, max_tokens=512):
+    max_chars = max_tokens * 4
+    return prompt_text[:max_chars]
+
+def truncate_prompt_to_tokens(llm, prompt_text, max_tokens=None):
+    # Use the model's context length if available, default to 8192
+    if max_tokens is None:
+        max_tokens = getattr(llm.llm, 'context_length', 8192)
+    tokens = llm.llm.tokenize(bytes(prompt_text, "utf-8"), add_bos=True)
+    if len(tokens) <= max_tokens:
+        return prompt_text
+    for cut in range(len(prompt_text), 0, -100):
+        candidate = prompt_text[:cut]
+        tokens = llm.llm.tokenize(bytes(candidate, "utf-8"), add_bos=True)
+        if len(tokens) <= max_tokens:
+            return candidate
+    return prompt_text[:max_tokens * 4]

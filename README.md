@@ -211,3 +211,33 @@ Please reference our work if you find *TradingAgents* provides you with some hel
       url={https://arxiv.org/abs/2412.20138}, 
 }
 ```
+
+## LLM Backend Options
+
+TradingAgents now supports both OpenAI and local LLMs (such as Llama models via llama-cpp-python).
+
+### To use OpenAI (default):
+- Set `llm_backend` to `openai` in your config (or leave as default).
+- Make sure you have `openai` and `langchain-openai` installed.
+- Set your `OPENAI_API_KEY` as before.
+
+### To use a local LLM (Llama):
+- Install `llama-cpp-python`:
+  ```bash
+  pip install llama-cpp-python
+  ```
+- Download a compatible GGUF model (e.g., from HuggingFace).
+- Set `llm_backend` to `local` in your config.
+- Set `local_model_path` to the path of your downloaded GGUF model.
+
+Example config:
+```python
+DEFAULT_CONFIG = {
+    # ...
+    "llm_backend": "local",  # or 'openai'
+    "local_model_path": "/path/to/your/model.gguf",
+    # ...
+}
+```
+
+See the `tradingagents/default_config.py` for all options.

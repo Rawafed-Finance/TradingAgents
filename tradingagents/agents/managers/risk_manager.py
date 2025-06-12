@@ -1,5 +1,6 @@
 import time
 import json
+from tradingagents.llm_interface import LocalLLM
 
 
 def create_risk_manager(llm, memory):
@@ -43,10 +44,20 @@ Deliverables:
 
 Focus on actionable insights and continuous improvement. Build on past lessons, critically evaluate all perspectives, and ensure each decision advances better outcomes."""
 
-        response = llm.invoke(prompt)
+        if hasattr(llm, "invoke"):
+            response = llm.invoke(prompt)
+            response_content = response.content
+        else:
+            if hasattr(llm, "llm"):
+                prompt = truncate_prompt_to_tokens(llm, prompt)
+            response = llm.chat(prompt)
+            if isinstance(response, str):
+                response_content = response
+            else:
+                response_content = response.content
 
         new_risk_debate_state = {
-            "judge_decision": response.content,
+            "judge_decision": response_content,
             "history": risk_debate_state["history"],
             "risky_history": risk_debate_state["risky_history"],
             "safe_history": risk_debate_state["safe_history"],
@@ -60,7 +71,23 @@ Focus on actionable insights and continuous improvement. Build on past lessons, 
 
         return {
             "risk_debate_state": new_risk_debate_state,
-            "final_trade_decision": response.content,
+            "final_trade_decision": response_content,
         }
 
     return risk_manager_node
+
+def truncate_prompt_to_tokens(llm, prompt_text, max_tokens=None):
+    # Only truncate for LocalLLM
+    if not isinstance(llm, LocalLLM):
+        return prompt_text
+    if max_tokens is None:
+        max_tokens = getattr(llm.llm, 'context_length', 4096)
+    tokens = llm.llm.tokenize(bytes(prompt_text, "utf-8"), add_bos=True)
+    if len(tokens) <= max_tokens:
+        return prompt_text
+    for cut in range(len(prompt_text), 0, -100):
+        candidate = prompt_text[:cut]
+        tokens = llm.llm.tokenize(bytes(candidate, "utf-8"), add_bos=True)
+        if len(tokens) <= max_tokens:
+            return candidate
+    return prompt_text[:max_tokens * 4]

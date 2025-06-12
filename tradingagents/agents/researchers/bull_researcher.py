@@ -1,9 +1,27 @@
 from langchain_core.messages import AIMessage
 import time
 import json
+from tradingagents.llm_interface import LocalLLM
 
 
 def create_bull_researcher(llm, memory):
+    def truncate_prompt_to_tokens(llm, prompt_text, max_tokens=None):
+        # Only truncate for LocalLLM
+        if not isinstance(llm, LocalLLM):
+            return prompt_text
+        if max_tokens is None:
+            max_tokens = getattr(llm.llm, 'context_length', 4096)
+        tokens = llm.llm.tokenize(bytes(prompt_text, "utf-8"), add_bos=True)
+        if len(tokens) <= max_tokens:
+            return prompt_text
+        # If too long, iteratively trim
+        for cut in range(len(prompt_text), 0, -100):
+            candidate = prompt_text[:cut]
+            tokens = llm.llm.tokenize(bytes(candidate, "utf-8"), add_bos=True)
+            if len(tokens) <= max_tokens:
+                return candidate
+        return prompt_text[:max_tokens * 4]
+
     def bull_node(state) -> dict:
         investment_debate_state = state["investment_debate_state"]
         history = investment_debate_state.get("history", "")
@@ -42,9 +60,17 @@ Reflections from similar situations and lessons learned: {past_memory_str}
 Use this information to deliver a compelling bull argument, refute the bear's concerns, and engage in a dynamic debate that demonstrates the strengths of the bull position. You must also address reflections and learn from lessons and mistakes you made in the past.
 """
 
-        response = llm.invoke(prompt)
-
-        argument = f"Bull Analyst: {response.content}"
+        if hasattr(llm, "invoke"):
+            response = llm.invoke(prompt)
+            argument = f"Bull Analyst: {response.content}"
+        else:
+            # Truncate prompt for local LLMs only
+            prompt = truncate_prompt_to_tokens(llm, prompt)
+            response = llm.chat(prompt)
+            if isinstance(response, str):
+                argument = f"Bull Analyst: {response}"
+            else:
+                argument = f"Bull Analyst: {response.content}"
 
         new_investment_debate_state = {
             "history": history + "\n" + argument,

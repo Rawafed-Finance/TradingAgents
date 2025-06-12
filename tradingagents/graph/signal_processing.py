@@ -1,12 +1,12 @@
 # TradingAgents/graph/signal_processing.py
 
-from langchain_openai import ChatOpenAI
+from tradingagents.llm_interface import BaseLLM
 
 
 class SignalProcessor:
     """Processes trading signals to extract actionable decisions."""
 
-    def __init__(self, quick_thinking_llm: ChatOpenAI):
+    def __init__(self, quick_thinking_llm: BaseLLM):
         """Initialize with an LLM for processing."""
         self.quick_thinking_llm = quick_thinking_llm
 
@@ -28,4 +28,11 @@ class SignalProcessor:
             ("human", full_signal),
         ]
 
-        return self.quick_thinking_llm.invoke(messages).content
+        llm = self.quick_thinking_llm
+        # If local LLM, flatten messages to a single string
+        if hasattr(llm, "llm"):  # crude check for LocalLLM
+            prompt_text = "\n".join([m[1] for m in messages])
+            result = llm.chat(prompt_text)
+            return result if isinstance(result, str) else result.content
+        else:
+            return llm.chat(messages).content

@@ -32,11 +32,24 @@ def create_trader(llm, memory):
             context,
         ]
 
-        result = llm.invoke(messages)
+        if hasattr(llm, "invoke"):
+            result = llm.invoke(messages)
+        else:
+            # For local LLMs, flatten messages to a single string prompt
+            if hasattr(llm, "llm"):
+                prompt_text = "\n".join([m["content"] for m in messages])
+                result = llm.chat(prompt_text)
+            else:
+                result = llm.chat(messages)
+
+        if hasattr(result, "content"):
+            content = result.content
+        else:
+            content = result
 
         return {
             "messages": [result],
-            "trader_investment_plan": result.content,
+            "trader_investment_plan": content,
             "sender": name,
         }
 

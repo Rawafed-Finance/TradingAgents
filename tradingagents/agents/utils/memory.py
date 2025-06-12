@@ -1,21 +1,30 @@
 import chromadb
 from chromadb.config import Settings
-from openai import OpenAI
 import numpy as np
 
 
 class FinancialSituationMemory:
-    def __init__(self, name):
-        self.client = OpenAI()
+    def __init__(self, name, config=None):
+        self.config = config or {}
         self.chroma_client = chromadb.Client(Settings(allow_reset=True))
         self.situation_collection = self.chroma_client.create_collection(name=name)
+        if self.config.get("llm_backend") == "local":
+            from sentence_transformers import SentenceTransformer
+            self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
+            self.embedding_backend = "local"
+        else:
+            from openai import OpenAI
+            self.client = OpenAI()
+            self.embedding_backend = "openai"
 
     def get_embedding(self, text):
-        """Get OpenAI embedding for a text"""
-        response = self.client.embeddings.create(
-            model="text-embedding-ada-002", input=text
-        )
-        return response.data[0].embedding
+        if self.embedding_backend == "local":
+            return self.embedder.encode(text).tolist()
+        else:
+            response = self.client.embeddings.create(
+                model="text-embedding-ada-002", input=text
+            )
+            return response.data[0].embedding
 
     def add_situations(self, situations_and_advice):
         """Add financial situations and their corresponding advice. Parameter is a list of tuples (situation, rec)"""
@@ -41,26 +50,13 @@ class FinancialSituationMemory:
         )
 
     def get_memories(self, current_situation, n_matches=1):
-        """Find matching recommendations using OpenAI embeddings"""
+        """Find matching recommendations using embeddings"""
         query_embedding = self.get_embedding(current_situation)
-
         results = self.situation_collection.query(
             query_embeddings=[query_embedding],
             n_results=n_matches,
-            include=["metadatas", "documents", "distances"],
         )
-
-        matched_results = []
-        for i in range(len(results["documents"][0])):
-            matched_results.append(
-                {
-                    "matched_situation": results["documents"][0][i],
-                    "recommendation": results["metadatas"][0][i]["recommendation"],
-                    "similarity_score": 1 - results["distances"][0][i],
-                }
-            )
-
-        return matched_results
+        return results["documents"][0] if results["documents"] else []
 
 
 if __name__ == "__main__":
@@ -101,9 +97,7 @@ if __name__ == "__main__":
 
         for i, rec in enumerate(recommendations, 1):
             print(f"\nMatch {i}:")
-            print(f"Similarity Score: {rec['similarity_score']:.2f}")
-            print(f"Matched Situation: {rec['matched_situation']}")
-            print(f"Recommendation: {rec['recommendation']}")
+            print(f"Matched Situation: {rec}")
 
     except Exception as e:
         print(f"Error during recommendation: {str(e)}")

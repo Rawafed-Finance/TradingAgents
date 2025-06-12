@@ -1,8 +1,25 @@
 import time
 import json
+from tradingagents.llm_interface import LocalLLM
 
 
 def create_risky_debator(llm):
+    def truncate_prompt_to_tokens(llm, prompt_text, max_tokens=None):
+        # Only truncate for LocalLLM
+        if not isinstance(llm, LocalLLM):
+            return prompt_text
+        if max_tokens is None:
+            max_tokens = getattr(llm.llm, 'context_length', 4096)
+        tokens = llm.llm.tokenize(bytes(prompt_text, "utf-8"), add_bos=True)
+        if len(tokens) <= max_tokens:
+            return prompt_text
+        for cut in range(len(prompt_text), 0, -100):
+            candidate = prompt_text[:cut]
+            tokens = llm.llm.tokenize(bytes(candidate, "utf-8"), add_bos=True)
+            if len(tokens) <= max_tokens:
+                return candidate
+        return prompt_text[:max_tokens * 4]
+
     def risky_node(state) -> dict:
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
@@ -32,9 +49,17 @@ Here is the current conversation history: {history} Here are the last arguments 
 
 Engage actively by addressing any specific concerns raised, refuting the weaknesses in their logic, and asserting the benefits of risk-taking to outpace market norms. Maintain a focus on debating and persuading, not just presenting data. Challenge each counterpoint to underscore why a high-risk approach is optimal. Output conversationally as if you are speaking without any special formatting."""
 
-        response = llm.invoke(prompt)
-
-        argument = f"Risky Analyst: {response.content}"
+        if hasattr(llm, "invoke"):
+            response = llm.invoke(prompt)
+            argument = f"Risky Analyst: {response.content}"
+        else:
+            if hasattr(llm, "llm"):
+                prompt = truncate_prompt_to_tokens(llm, prompt)
+            response = llm.chat(prompt)
+            if isinstance(response, str):
+                argument = f"Risky Analyst: {response}"
+            else:
+                argument = f"Risky Analyst: {response.content}"
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,

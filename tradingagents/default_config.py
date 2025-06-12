@@ -10,6 +10,8 @@ DEFAULT_CONFIG = {
     # LLM settings
     "deep_think_llm": "o4-mini",
     "quick_think_llm": "gpt-4o-mini",
+    "llm_backend": "local",  # 'openai' or 'local'
+    "local_model_path": "/Users/ahmed/Desktop/rawafed/TradingAgents/.models/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf",  # Set this if using local LLM
     # Debate and discussion settings
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,

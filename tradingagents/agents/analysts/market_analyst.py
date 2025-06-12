@@ -1,9 +1,28 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
+import os
 
 
 def create_market_analyst(llm, toolkit):
+
+    def truncate_prompt(prompt_text, max_tokens=512):
+        max_chars = max_tokens * 4
+        return prompt_text[:max_chars]
+
+    def truncate_prompt_to_tokens(llm, prompt_text, max_tokens=None):
+        # Use the model's context length if available, default to 8192
+        if max_tokens is None:
+            max_tokens = getattr(llm.llm, 'context_length', 8192)
+        tokens = llm.llm.tokenize(bytes(prompt_text, "utf-8"), add_bos=True)
+        if len(tokens) <= max_tokens:
+            return prompt_text
+        for cut in range(len(prompt_text), 0, -100):
+            candidate = prompt_text[:cut]
+            tokens = llm.llm.tokenize(bytes(candidate, "utf-8"), add_bos=True)
+            if len(tokens) <= max_tokens:
+                return candidate
+        return prompt_text[:max_tokens * 4]
 
     def market_analyst_node(state):
         current_date = state["trade_date"]
@@ -50,6 +69,103 @@ Volume-Based Indicators:
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
         )
 
+        # --- Enhanced Local LLM Path: Simulate Tool Calling ---
+        if toolkit.config.get("llm_backend") == "local":
+            # 1. Pre-fetch tool outputs
+            # Always call get_YFin_data first (required for indicators)
+            if toolkit.config["online_tools"]:
+                yfin_data = toolkit.get_YFin_data_online.func(
+                    symbol=ticker, start_date=current_date, end_date=current_date
+                )
+                indicators = ["close_50_sma", "macd", "rsi"]  # Only 3 most relevant
+                indicator_outputs = {}
+                for ind in indicators:
+                    try:
+                        indicator_outputs[ind] = toolkit.get_stockstats_indicators_report_online.func(
+                            symbol=ticker, indicator=ind, curr_date=current_date, look_back_days=30
+                        )
+                    except Exception as e:
+                        indicator_outputs[ind] = f"[Error fetching {ind}: {e}]"
+            else:
+                yfin_data = toolkit.get_YFin_data.func(
+                    symbol=ticker, start_date=current_date, end_date=current_date
+                )
+                indicators = ["close_50_sma", "macd", "rsi"]
+                indicator_outputs = {}
+                for ind in indicators:
+                    try:
+                        indicator_outputs[ind] = toolkit.get_stockstats_indicators_report.func(
+                            symbol=ticker, indicator=ind, curr_date=current_date, look_back_days=30
+                        )
+                    except Exception as e:
+                        indicator_outputs[ind] = f"[Error fetching {ind}: {e}]"
+
+            # 2. Summarize tool outputs (first 10 lines for yfin, 5 for indicators)
+            def summarize_output(text, n):
+                lines = text.splitlines()
+                return "\n".join(lines[:n]) + ("\n..." if len(lines) > n else "")
+            yfin_data_summary = summarize_output(str(yfin_data), 10)
+            indicator_outputs_summary = {k: summarize_output(str(v), 5) for k, v in indicator_outputs.items()}
+
+            # 3. Shorten system instructions
+            short_system_message = (
+                f"You are a market analyst. Use the provided data and indicators to write a concise, actionable market report for {ticker} on {current_date}. Focus on insights and recommendations. Do not repeat instructions."
+            )
+            # 4. Build a structured prompt
+            prompt_sections = [
+                "### SYSTEM INSTRUCTIONS\n" + short_system_message,
+                f"\n### TOOL OUTPUT: get_YFin_data (summary)\n{yfin_data_summary}",
+            ]
+            for ind in indicators:
+                prompt_sections.append(f"\n### TOOL OUTPUT: get_stockstats_indicators_report ({ind}, summary)\n{indicator_outputs_summary[ind]}")
+            # Add user messages (if any)
+            if state.get("messages"):
+                user_msgs = state["messages"]
+                try:
+                    user_msgs_str = "\n".join([
+                        m.content if hasattr(m, "content") else str(m) for m in user_msgs
+                    ])
+                except Exception:
+                    user_msgs_str = str(user_msgs)
+                prompt_sections.append("\n### USER MESSAGES\n" + user_msgs_str)
+            # 5. Add explicit synthesis instruction
+            prompt_sections.append(f"\n### TASK\nBased on the above data, write a concise, actionable market report for {ticker} on {current_date}. Do not repeat instructions. Focus on insights and recommendations.")
+            prompt_text = "\n".join(prompt_sections)
+            # Always truncate to model's context window before sending to LLM
+            max_ctx = getattr(llm.llm, 'n_ctx', None)
+            if callable(max_ctx):
+                max_ctx = max_ctx()
+            if max_ctx is None:
+                max_ctx = getattr(llm.llm, 'context_length', 4096)
+            if callable(max_ctx):
+                max_ctx = max_ctx()
+            max_ctx = int(max_ctx)
+            prompt_text = truncate_prompt_to_tokens(llm, prompt_text, max_tokens=max_ctx)
+            result = llm.chat(prompt_text)
+            # Save report and metadata
+            output_dir = os.path.join("output_reports", ticker)
+            os.makedirs(output_dir, exist_ok=True)
+            meta = {
+                "symbol": ticker,
+                "date": current_date,
+                "model": getattr(llm.llm, 'model_path', str(llm.llm)),
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "llm_backend": toolkit.config.get("llm_backend"),
+                "prompt_truncated": len(prompt_text),
+            }
+            report_data = {
+                "meta": meta,
+                "report": result,
+            }
+            out_path = os.path.join(output_dir, f"market_report_{current_date}.json")
+            with open(out_path, "w") as f:
+                json.dump(report_data, f, indent=2)
+            return {
+                "messages": [result],
+                "market_report": result,
+            }
+
+        # --- OpenAI/Function Calling Path (unchanged) ---
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -72,9 +188,21 @@ Volume-Based Indicators:
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(ticker=ticker)
 
-        chain = prompt | llm.bind_tools(tools)
-
-        result = chain.invoke(state["messages"])
+        if hasattr(llm, "bind_tools"):
+            chain = prompt | llm.bind_tools(tools)
+            result = chain.invoke(state["messages"])
+        else:
+            # LocalLLM fallback: just use chat
+            prompt_text = prompt.format(messages=state["messages"])
+            if toolkit.config.get("llm_backend") == "local":
+                prompt_text = truncate_prompt_to_tokens(llm, prompt_text)
+            result = llm.chat(prompt_text)
+            # If using LocalLLM, result is a string, not an object with .content
+            if toolkit.config.get("llm_backend") == "local":
+                return {
+                    "messages": [result],
+                    "market_report": result,
+                }
 
         return {
             "messages": [result],
@@ -82,3 +210,13 @@ Volume-Based Indicators:
         }
 
     return market_analyst_node
+
+# Add .gitignore for output_reports
+if not os.path.exists(".gitignore"):
+    with open(".gitignore", "w") as f:
+        f.write("output_reports/\n")
+else:
+    with open(".gitignore", "r+") as f:
+        lines = f.readlines()
+        if "output_reports/\n" not in lines:
+            f.write("output_reports/\n")

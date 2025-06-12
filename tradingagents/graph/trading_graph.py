@@ -18,6 +18,7 @@ from tradingagents.agents.utils.agent_states import (
     RiskDebateState,
 )
 from tradingagents.dataflows.interface import set_config
+from tradingagents.llm_interface import BaseLLM, OpenAILLM, LocalLLM
 
 from .conditional_logic import ConditionalLogic
 from .setup import GraphSetup
@@ -55,18 +56,20 @@ class TradingAgentsGraph:
         )
 
         # Initialize LLMs
-        self.deep_thinking_llm = ChatOpenAI(model=self.config["deep_think_llm"])
-        self.quick_thinking_llm = ChatOpenAI(
-            model=self.config["quick_think_llm"], temperature=0.1
-        )
+        if self.config.get("llm_backend", "openai") == "local":
+            self.deep_thinking_llm = LocalLLM(model_path=self.config["local_model_path"])
+            self.quick_thinking_llm = LocalLLM(model_path=self.config["local_model_path"])
+        else:
+            self.deep_thinking_llm = OpenAILLM(model=self.config["deep_think_llm"])
+            self.quick_thinking_llm = OpenAILLM(model=self.config["quick_think_llm"], temperature=0.1)
         self.toolkit = Toolkit(config=self.config)
 
         # Initialize memories
-        self.bull_memory = FinancialSituationMemory("bull_memory")
-        self.bear_memory = FinancialSituationMemory("bear_memory")
-        self.trader_memory = FinancialSituationMemory("trader_memory")
-        self.invest_judge_memory = FinancialSituationMemory("invest_judge_memory")
-        self.risk_manager_memory = FinancialSituationMemory("risk_manager_memory")
+        self.bull_memory = FinancialSituationMemory("bull_memory", config=self.config)
+        self.bear_memory = FinancialSituationMemory("bear_memory", config=self.config)
+        self.trader_memory = FinancialSituationMemory("trader_memory", config=self.config)
+        self.invest_judge_memory = FinancialSituationMemory("invest_judge_memory", config=self.config)
+        self.risk_manager_memory = FinancialSituationMemory("risk_manager_memory", config=self.config)
 
         # Create tool nodes
         self.tool_nodes = self._create_tool_nodes()
